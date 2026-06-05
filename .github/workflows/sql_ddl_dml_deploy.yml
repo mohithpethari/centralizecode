@@ -1,0 +1,173 @@
+name: RUN SQL SCRIPTS (DDL/INSERTS/DELETE/DROP)
+
+on:
+  push:
+    branches:
+      - dev
+      - stage
+      - prod
+      - release_1.0.2
+      - end2endtesting
+    paths:
+      - data-engineering/sql/ddl/**
+      - data-engineering/sql/inserts/**
+      - data-engineering/sql/updates/**
+      - data-engineering/sql/delete/**
+      - data-engineering/sql/drop/**
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  approval:
+    if: github.ref_name == 'release_1.0.2' || github.ref_name == 'prod'
+    runs-on: uhg-runner
+    environment: ${{ github.ref_name == 'prod' && 'prod_approval' || 'stage_approval' }}
+    steps:
+      - name: Wait for approval
+        run: echo "Approval received. Continuing with deployment."
+
+  deploy:
+    needs: [approval]
+    if: always() && (needs.approval.result == 'success' || (github.ref_name != 'stage' && github.ref_name != 'prod'))
+    runs-on: uhg-runner
+    environment: ${{ github.ref_name == 'prod' && 'mrdp-pie-prod' || (github.ref_name == 'release_1.0.2' && 'mrdp-pie-stg') || 'mrdp-pie-dev' }}
+    env:
+      DATABRICKS_HOST: ${{ vars.URL }}
+      DBSQLCLI_HOST_NAME: ${{ vars.HOSTNAME }}
+      DBSQLCLI_HTTP_PATH: ${{ vars.HTTP_PATH }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_SP_TENANT_ID }}
+      ARM_CLIENT_ID: ${{ secrets.AZURE_SP_APPLICATION_ID }}
+      ARM_CLIENT_SECRET: ${{ secrets.AZURE_SP_CLIENT_SECRET }}
+      PIP_INDEX_URL: https://${{ secrets.JFROG_USERNAME }}:${{ secrets.JFROG_PASSWORD }}@edgeinternal1uhg.optum.com/artifactory/api/pypi/umrancillaryprp-pypi-vir/simple
+
+    steps:
+      - name: environment check
+        run: echo "Environment is ${{ github.ref_name }}"
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0  # 0 means all history
+
+      - name: setup python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+        env:
+          PIP_INDEX_URL: https://${{secrets.JFROG_USERNAME}}:${{secrets.JFROG_PASSWORD}}@edgeinternal1uhg.optum.com/artifactory/api/pypi/umrancillaryprp-pypi-vir/simple
+
+      - name: Install deps
+        run: |
+          set -euo pipefail
+          python --version
+          pip install databricks-sql-cli -i $PIP_INDEX_URL
+          python -m pip uninstall -y cli-helpers
+          python -m pip install "cli-helpers==2.2.1" -i $PIP_INDEX_URL
+          # If jq isn't already on the runner, install it via OS package manager.
+          if ! command -v jq >/dev/null 2>&1; then
+            echo "jq not found; installing..."
+            if command -v apt-get >/dev/null 2>&1; then
+              sudo apt-get update && sudo apt-get install -y jq
+            elif command -v yum >/dev/null 2>&1; then
+              sudo yum install -y jq
+            else
+              echo "jq is required but could not be installed automatically." >&2
+              exit 1
+            fi
+          fi
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_SP_APPLICATION_ID }}
+          tenant-id: ${{ secrets.AZURE_SP_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Get Databricks SQL Access Token via OIDC
+        run: |
+          ACCESS_TOKEN=$(az account get-access-token --resource ${{ vars.RESOURCE_ID }} --query accessToken -o tsv)
+          echo "DBSQLCLI_ACCESS_TOKEN=$ACCESS_TOKEN" >> $GITHUB_ENV
+
+      - name: dbsqlcli-check
+        id: dbsqlcli-check
+        continue-on-error: true
+        run: |
+            dbsqlcli
+
+      
+      - name: Get Changed SQL Files
+        id: changed_sql
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Ensure we have the commits referenced by the current ref
+          git fetch --no-tags --prune --depth=2 origin "${{ github.ref_name }}" || true
+
+          # Prefer push event before/after SHAs
+          BEFORE="${{ github.event.before }}"
+          AFTER="${{ github.event.after }}"
+
+          # Fallbacks: previous commit for BEFORE; current SHA for AFTER
+          if [ -z "${BEFORE}" ]; then
+            BEFORE=$(git rev-parse HEAD~1 || echo "")
+          fi
+          if [ -z "${AFTER}" ]; then
+            AFTER="${{ github.sha }}"
+          fi
+
+          # Additional fallback for non-push events: compare against merge-base with default branch
+          DEFAULT_BRANCH="${{ github.event.repository.default_branch }}"
+          if [ -z "${BEFORE}" ] || [ -z "${AFTER}" ]; then
+            git fetch --no-tags --prune origin "${DEFAULT_BRANCH}" || true
+            BASE=$(git merge-base "origin/${DEFAULT_BRANCH}" HEAD || echo "")
+            if [ -z "${BEFORE}" ]; then
+              BEFORE="${BASE}"
+            fi
+            if [ -z "${AFTER}" ]; then
+              AFTER="${{ github.sha }}"
+            fi
+          fi
+
+          # Diff and restrict to specific SQL subdirectories
+          CHANGED_FILES=$(git diff --name-only "${BEFORE}" "${AFTER}" \
+            | grep -E '^data-engineering/sql/(ddl|inserts|updates|delete|drop)/.*\.sql$' || true)
+
+          echo "Changed files (newline-separated):"
+          echo "${CHANGED_FILES}"
+
+          # Space-separated for easy for-loops; also trim trailing spaces
+          CHANGED_FILES_SPACE=$(echo "${CHANGED_FILES}" | tr '\n' ' ' | sed 's/[[:space:]]\{1,\}$//')
+          echo "changed_files=${CHANGED_FILES_SPACE}" >> "$GITHUB_OUTPUT"
+
+      - name: replace parameters
+        run: |
+            for sqlfile in ${{ steps.changed_sql.outputs.changed_files }};
+            do
+              echo "$sqlfile"
+              sed -i "s/unitycatalog/${{ vars.UNITY_CATALOG }}/gI" $sqlfile
+              sed -i "s/storageaccount/${{ vars.STORAGE_URL }}/gI" $sqlfile
+              sed -i "s/goldschema/${{ vars.GOLDSCHEMA }}/gI" $sqlfile
+              sed -i "s/silverschema/${{ vars.SILVERSCHEMA }}/gI" $sqlfile
+              sed -i "s/bronzeschema/${{ vars.BRONZESCHEMA }}/gI" $sqlfile
+            done
+
+      - name: Deploy SQL Files
+        run: |
+            for sqlfile in ${{ steps.changed_sql.outputs.changed_files }};
+            do
+              echo "Processing $sqlfile"
+              dbsqlcli -e "$sqlfile" 
+              if [ $? == 0 ]
+              then
+                echo "Successfully executed $sqlfile"
+              else
+                echo "Failed to execute $sqlfile"
+                exit 1
+              fi
+            done
+
+      - name: No changes in sql files
+        if: steps.changed_sql.outputs.changed_files == ''
+        run: |
+            echo "No changes in volumes folder"

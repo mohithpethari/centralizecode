@@ -1,0 +1,493 @@
+name: centralized_Code_Deploy
+
+on:
+  workflow_call:
+    inputs:
+      team:
+        description: 'enter team name'
+        type: string
+        required: false
+      environment:
+        description: 'deploy to'
+        type: string
+        required: false
+      source_path:
+        description: 'Enter the source path(Local path) & use / for sub_path'
+        required: false
+        type: string
+      destination_path:
+        description: 'Enter the destination path & use / for sub_path'
+        required: false
+        type: string
+      job_type:
+        description: "please enter job type"
+        type: string
+      job:
+        description: "please enter job file path"
+        type: string
+      code_deploy:
+        type: boolean
+        required: false
+      workflow_job:
+        type: boolean
+        required: false
+      deploy_config:
+        type: boolean
+        required: false      
+      # Inputs from Copy-Config-Files-to-Storage-Account
+      Source_file:
+        description: 'Enter the source path(Local path)'
+        required: false
+        type: string
+      storage_container:
+        description: 'Enter the destination path(/Remote path) for the storage account container'
+        required: false
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  Approval-Request:
+    if : always() && ( contains( inputs.environment, 'prod' ) ) # || contains( inputs.environment, 'stg' ))
+    runs-on: [ uhg-runner ]
+    environment: ${{ inputs.team }}
+    steps:
+        - name: Approval Request
+          run: | 
+            echo "Approval request sent to ${{ inputs.team }} team"
+
+  Centralized_Databricks_Deployment:
+    needs: Approval-Request
+    if: always() && (needs.Approval-Request.result == 'success' || needs.Approval-Request.result == 'skipped')
+    runs-on: [ uhg-runner ]
+    environment: ${{ inputs.environment }}
+    env:
+      NOTEBOOK_PATH: ${{ inputs.source_path }}
+      DESTINATION_PATH: ${{ inputs.destination_path }}
+      DATABRICKS_AZURE_RESOURCE_ID: ${{ vars.RESOURCEID }}
+      USERNAME: ${{ github.actor }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_SP_TENANT_ID }}
+      ARM_CLIENT_ID: ${{ secrets.AZURE_SP_APPLICATION_ID }}
+      STORAGEACCOUNT: ${{ vars.AZURE_STORAGE_ACCOUNT }}
+      YAML_FILES: ${{ inputs.Source_file }}
+      STORAGE_CONTAINER: ${{ inputs.storage_container }}     
+      DATABRICKS_HOST: ${{ vars.URL }}
+
+
+    steps: 
+      - name: Pipeline run information
+        run: |
+          echo "This pipeline is triggered by ${{github.actor}}"
+          echo "Selected environment is ${{ inputs.environment }}"
+          echo "Selected team is ${{ inputs.team }}"
+          echo "Source file path is ${{ inputs.Source_file }}"
+          echo "Destination path is ${{ inputs.storage_container }}"
+          
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # fetch full history
+          clean: true # remove any previous files
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.4' # Change to your Python version if needed
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_SP_APPLICATION_ID }}
+          tenant-id: ${{ secrets.AZURE_SP_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Azure CLI script
+        run: |
+          az account show
+
+      - name: Setup databricks cli 
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/v0.251.0/install.sh | sudo sh
+           
+              
+      - name: Deploy to Databricks
+        if: ${{ inputs.source_path != '' && inputs.destination_path != '' && inputs.team != '' && inputs.environment != '' }}
+        run: |
+          mkdir -p backupfolder
+
+          dbx_deploy() {
+            echo "################ Deploying $spath file ################"
+            set -x
+
+            # Determine file type and language/format
+            case $spath in
+              *.py)
+                lang="PYTHON"
+                format=""
+                strip_ext=true
+                ;;
+              *.ipynb)
+                lang="PYTHON"
+                format="JUPYTER"
+                strip_ext=true
+                ;;
+              *.sql)
+                lang="SQL"
+                format=""
+                strip_ext=true
+                ;;
+              *.r|*.R)
+                lang="R"
+                format=""
+                strip_ext=true
+                ;;
+              *.scala|*.sc)
+                lang="SCALA"
+                format=""
+                strip_ext=true
+                ;;
+              *.html)
+                lang=""
+                format="HTML"
+                strip_ext=true
+                ;;
+              *)
+                echo "Unsupported file type: $spath"
+                return 1
+                ;;
+            esac
+
+            if [[ -n $dpath ]]; then
+              # Use destination path
+              if [[ "$strip_ext" == "true" ]]; then
+                dfilepath=${dpath%.*}
+                sfilepath=${spath%.*}
+              else
+                dfilepath=$dpath
+                sfilepath=$spath
+              fi
+              dir=$(dirname "$dpath")
+
+              if databricks workspace list "/$dfilepath" 2>/dev/null; then
+                if [[ "$strip_ext" == "true" ]]; then
+                  mv "$spath" "$sfilepath"
+                fi
+                mkdir -p "backupfolder/$dir"
+                databricks workspace export "/$dfilepath" --file "backupfolder/$dir/$(basename "$dfilepath").${spath##*.}"
+                databricks workspace delete "/$dfilepath"
+                if [[ -n "$format" ]]; then
+                  databricks workspace import "/$dfilepath" --file "$sfilepath" --format "$format" --language "$lang" --overwrite
+                else
+                  databricks workspace import "/$dfilepath" --file "$sfilepath" --language "$lang" --overwrite
+                fi
+              else
+                if [[ "$strip_ext" == "true" ]]; then
+                  mv "$spath" "$sfilepath"
+                fi
+                databricks workspace mkdirs "/$dir"
+                if [[ -n "$format" ]]; then
+                  databricks workspace import "/$dfilepath" --file "$sfilepath" --format "$format" --language "$lang" --overwrite
+                else
+                  databricks workspace import "/$dfilepath" --file "$sfilepath" --language "$lang" --overwrite
+                fi
+              fi
+            else
+              # No destination path - use source path
+              if [[ "$strip_ext" == "true" ]]; then
+                filepath=${spath%.*}
+              else
+                filepath=$spath
+              fi
+              dir=$(dirname "$filepath")
+              [[ "$dir" == "." ]] && dir=""
+
+              if databricks workspace list "/$filepath" 2>/dev/null; then
+                if [[ "$strip_ext" == "true" ]]; then
+                  mv "$spath" "$filepath"
+                fi
+                mkdir -p "backupfolder/$dir"
+                databricks workspace export "/$filepath" --file "backupfolder/$dir/$(basename "$filepath").${spath##*.}"
+                databricks workspace delete "/$filepath"
+                if [[ -n "$format" ]]; then
+                  databricks workspace import "/$filepath" --file "$filepath" --format "$format" --language "$lang" --overwrite
+                else
+                  databricks workspace import "/$filepath" --file "$filepath" --language "$lang" --overwrite
+                fi
+              else
+                if [[ "$strip_ext" == "true" ]]; then
+                  mv "$spath" "$filepath"
+                fi
+                [[ -n "$dir" ]] && databricks workspace mkdirs "/$dir"
+                if [[ -n "$format" ]]; then
+                  databricks workspace import "/$filepath" --file "$filepath" --format "$format" --language "$lang" --overwrite
+                else
+                  databricks workspace import "/$filepath" --file "$filepath" --language "$lang" --overwrite
+                fi
+              fi
+            fi
+
+            set +x
+            echo "################ Deployment of $spath file is done ################"
+          }
+
+          dbx_deploy_dir() {
+            echo "################ Deploying $spath directory ################"
+            set -x
+            if [[ -n $dpath ]]; then
+              if databricks workspace list "/$dpath" 2>/dev/null; then
+                mkdir -p "backupfolder/$dpath"
+                databricks workspace export-dir "/$dpath" "backupfolder/$dpath"
+                databricks workspace delete -r "/$dpath"
+              fi
+              databricks workspace import-dir "$spath" "/$dpath" --overwrite
+            else
+              if databricks workspace list "/$spath" 2>/dev/null; then
+                mkdir -p "backupfolder/$spath"
+                databricks workspace export-dir "/$spath" "backupfolder/$spath"
+                databricks workspace delete -r "/$spath"
+              fi
+              databricks workspace import-dir "$spath" "/$spath" --overwrite
+            fi
+
+            set +x
+            echo "################ Deployment of $spath directory is done ################"
+          }
+
+          dbx_backup() {
+            databricks workspace import-dir "$1" "/backup/$(date +%Y-%m-%d)/$(date +%I:%M:%S_%p_%Z)"
+          }
+
+          # Read input paths
+          for i in $NOTEBOOK_PATH; do
+            echo "$i" >> input1.txt
+          done
+          for j in $DESTINATION_PATH; do
+            echo "$j" >> input2.txt
+          done
+
+          # Process each path pair
+          while read -r spath <&3 && read -r dpath <&4; do
+            if [[ -f $spath ]]; then
+              case $spath in
+                *.py|*.ipynb|*.html|*.sql|*.r|*.R|*.scala|*.sc)
+                  dbx_deploy
+                  ;;
+                *)
+                  echo "$spath is not a compatible file format."
+                  echo "$spath" >> error.txt
+                  ;;
+              esac
+            elif [[ -d $spath ]]; then
+              dbx_deploy_dir
+            else
+              echo "$spath is neither an available directory nor an available file."
+              echo "Please recheck your inputs."
+              echo "$spath" >> error.txt
+            fi
+          done 3< input1.txt 4< input2.txt
+
+          # Backup if needed
+          if [[ -d backupfolder ]] && [[ -n "$(ls -A backupfolder)" ]]; then
+            dbx_backup backupfolder
+          else
+            echo "There is nothing to backup"
+          fi
+
+          # Cleanup
+          rm -rf input1.txt input2.txt backupfolder
+
+      - name: Errors check
+        run: |
+            if [[ -f error.txt ]]
+            then
+              exit 1
+            else
+              echo "No Errors! All files are deployed successfully"
+            fi
+
+      - name: Errors
+        if: failure()
+        run: |
+            echo "Following files are not deployed due to some errors"
+            echo "Following given paths are nither one of available directories nor one of available files."
+            cat error.txt
+            echo "please recheck with your inputs"
+            echo "Don't worry! still we have deployed all available files successfully."
+      
+      - name: Install jq
+        if: ${{ inputs.choice != '' && inputs.job != '' && inputs.environment != '' }}
+        run: |
+            sudo apt update
+            sudo apt install jq -y
+
+      - name: Update existing Databricks workflow job
+        if: ${{ inputs.job_type == 'Update_existing_job' && inputs.job != '' }}
+        run: |
+          set -euo pipefail
+          set -x
+
+          for job in ${{ inputs.job }}; do
+            if [[ -f "$job" ]]; then
+              # Validate JSON
+              if ! jq . "$job" >/dev/null 2>&1; then
+                echo "Invalid JSON in $job"
+                continue
+              fi
+
+              jobname=$(jq -r '.name' "$job")
+              echo "Processing job: $jobname"
+
+              jobid=$(databricks jobs list --output JSON | jq -r --arg name "$jobname" '.jobs[] | select(.settings.name==$name) | .job_id')
+              if [[ -z "$jobid" ]]; then
+                echo "No job found with name $jobname"
+                continue
+              fi
+
+              echo "Resetting job ID: $jobid"
+              sed -i 's/"runtime_engine": "PHOTON"/"runtime_engine": ""/Ig' "$job"
+              databricks jobs reset --job-id "$jobid" --json-file "$job"
+              echo "Reset done for $jobid"
+
+            elif [[ -d "$job" ]]; then
+              files=$(find "$job" -type f -name "*.json")
+              if [[ -z "$files" ]]; then
+                echo "No JSON files found in directory $job"
+                continue
+              fi
+
+              for file in $files; do
+                if ! jq . "$file" >/dev/null 2>&1; then
+                  echo "Invalid JSON in $file"
+                  continue
+                fi
+
+                jobname=$(jq -r '.name' "$file")
+                jobid=$(databricks jobs list --output JSON | jq -r --arg name "$jobname" '.jobs[] | select(.settings.name==$name) | .job_id')
+                if [[ -z "$jobid" ]]; then
+                  echo "No job found with name $jobname"
+                  continue
+                fi
+
+                echo "Resetting job ID: $jobid"
+                sed -i 's/"runtime_engine": "PHOTON"/"runtime_engine": ""/Ig' "$file"
+                databricks jobs reset --job-id "$jobid" --json-file "$file"
+                echo "Reset done for $jobid"
+              done
+
+            else
+              echo "No valid file or directory found for $job"
+            fi
+          done
+
+
+      - name: create new workflow job
+        if: ${{ inputs.job_type == 'Create_new_job' && inputs.choice != '' && inputs.job != '' && inputs.environment != '' }}
+        run: |
+            set -x
+
+            echo ${{ vars.WORKFLOWJOBPERMISSIONS }} > permissions.json
+            sed -i "s\SPNAPPID\${{ secrets.AZURE_SP_APPLICATION_ID }}\g" permissions.json
+
+            for job in ${{ inputs.job }};
+            do
+              if [[ -f $job ]]
+              then
+                jq . $job #JSON validation check
+                databricks --version
+                databricks jobs create --json @$job > jobid.json
+                cat jobid.json
+                if [ -n "${{ vars.WORKFLOWJOBPERMISSIONS }}" ];
+                then
+                  jobidnum=$(jq '.job_id' jobid.json)
+                  echo "assigning the permissions to the workflow job_id : $jobidnum"
+                  databricks jobs set-permissions $jobidnum --json @permissions.json
+                else
+                  echo "No permissions set"
+                fi
+              elif [[ -d $job ]]
+              then
+                files=$(ls $job | grep ".json")
+                for file in $files;
+                do
+                  jq . $job #JSON validation check
+                  databricks jobs create --json @$file > jobid.json
+                  cat jobid.json
+                  if [ -n "${{ vars.WORKFLOWJOBPERMISSIONS }}" ];
+                  then
+                    jobidnum=$(jq '.job_id' jobid.json)
+                    echo "assigning the permissions to the workflow job_id : $jobidnum"
+                    databricks jobs set-permissions $jobidnum --json @permissions.json
+                  else
+                    echo "No permissions set"
+                  fi
+                done
+              else
+                echo "No job file found"
+              fi
+            done
+
+      - name: Backup of existing file
+        if: ${{ inputs.Source_file != '' && inputs.storage_container != '' && inputs.team != '' && inputs.environment != '' }}
+        run: |
+          STORAGE_CONTAINER=$(echo "${{ inputs.storage_container }}" | sed 's/^\s*//;s/\s*$//;s/\s*\/\s*/\//g')
+          LOCAL_FILE="blob.yaml"
+          TIMESTAMP=$(date +"%d-%m-%y_%H-%M-%S")
+          for SOURCE_FILE in "$YAML_FILES"; do
+              FILE_NAME=$(basename "$SOURCE_FILE")
+              BACKUP_FILE="back-${TIMESTAMP}-${FILE_NAME}"
+              echo "$FILE_NAME"
+              
+              if ! az storage blob download --account-name "$STORAGEACCOUNT" --container-name "$STORAGE_CONTAINER" --name "$FILE_NAME" --file "$LOCAL_FILE" --auth-mode login 2>&1 | grep -q "The specified blob does not exist"; then
+                  if [ -f "$LOCAL_FILE" ]; then
+                      mv "$LOCAL_FILE" "$BACKUP_FILE"
+                      
+                      az storage blob upload --account-name "$STORAGEACCOUNT" --container-name "$STORAGE_CONTAINER" --name "Backup/$BACKUP_FILE" --file "$BACKUP_FILE" --auth-mode login
+                      
+                      echo "File backed up to $BACKUP_FILE in $STORAGE_CONTAINER."
+                  else
+                      echo "File not found, no action taken."
+                  fi
+              else
+                  echo "The specified blob $FILE_NAME does not exist in the $STORAGEACCOUNT ."
+              fi
+          done
+
+      - name: deploy config to storage account
+        if: ${{ inputs.Source_file != '' && inputs.storage_container != '' && inputs.team != '' && inputs.environment != '' }}   
+        run: |
+          YAML_FILES="${{ inputs.Source_file }}"
+          DEST_PATHS="${{ inputs.storage_container }}"
+
+          IFS=',' read -ra SOURCES <<< "$YAML_FILES"
+          IFS=',' read -ra DESTS <<< "$DEST_PATHS"
+
+          for idx in "${!SOURCES[@]}"; do
+            SOURCE_FILE=$(echo "${SOURCES[$idx]}" | xargs) # trim spaces
+            DEST_CONTAINER=$(echo "${DESTS[$idx]}" | xargs | sed 's/^\s*//;s/\s*$//;s/\s*\/\s*/\//g')
+            FILE_NAME=$(basename "$SOURCE_FILE")
+            echo "Processing $FILE_NAME to $DEST_CONTAINER"
+
+            az storage blob download --account-name "$STORAGEACCOUNT" --container-name "$DEST_CONTAINER" --name "$FILE_NAME" --file existingfile.yaml --auth-mode login || touch existingfile.yaml
+            if [ ! -f existingfile.yaml ]; then
+              echo "Existing file not found. Uploading new file..."
+              az storage blob upload --account-name "$STORAGEACCOUNT" --container-name "$DEST_CONTAINER" --file "$SOURCE_FILE" --auth-mode login
+            else
+              if ! cmp -s "$SOURCE_FILE" existingfile.yaml; then
+                echo "Files are different. Applying new changes..."
+                cat "$SOURCE_FILE" > local_file.yaml
+                touch updated_file.yaml | diff -u existingfile.yaml local_file.yaml > updated_file.yaml || true
+                patch existingfile.yaml < updated_file.yaml
+              else
+                echo "Files are identical. No changes needed."
+                cp local_file.yaml existingfile.yaml
+              fi
+            fi
+
+            echo "final file"
+            mv existingfile.yaml "$FILE_NAME"
+
+            az storage blob upload --account-name "$STORAGEACCOUNT" --container-name "$DEST_CONTAINER" --file "$FILE_NAME" --auth-mode login --overwrite
+            echo "File \"$SOURCE_FILE\" deployed in \"$DEST_CONTAINER\" path"
+          done       
