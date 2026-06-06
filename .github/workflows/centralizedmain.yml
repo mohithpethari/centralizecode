@@ -61,7 +61,7 @@ jobs:
   Centralized_Databricks_Deployment:
     needs: Approval-Request
     if: always() && (needs.Approval-Request.result == 'success' || needs.Approval-Request.result == 'skipped')
-    runs-on: [ uhg-runner ]
+    runs-on: [ opm-runner ]
     environment: ${{ inputs.environment }}
     env:
       NOTEBOOK_PATH: ${{ inputs.source_path }}
