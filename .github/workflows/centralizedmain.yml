@@ -164,7 +164,6 @@ jobs:
           Write-Host "Verifying installation..."
           & "$extractPath\databricks.exe" --version
 
-      # ✅ FIXED: No heredoc - uses printf instead to avoid YAML indentation issues
       - name: Configure Databricks CLI Auth
         shell: bash
         env:
@@ -172,16 +171,21 @@ jobs:
           MSYS2_ARG_CONV_EXCL: "*"
         run: |
           echo "Getting Azure AD token for Databricks..."
-          ACCESS_TOKEN=$(az account get-access-token --resource "$DATABRICKS_AZURE_RESOURCE_ID" --query accessToken --output tsv)
+          ACCESS_TOKEN=$(az account get-access-token \
+            --resource "$DATABRICKS_AZURE_RESOURCE_ID" \
+            --query accessToken --output tsv)
+
           if [[ -z "$ACCESS_TOKEN" ]]; then
             echo "ERROR: Failed to get access token"
             exit 1
           fi
+
           echo "Token retrieved successfully."
           printf '[DEFAULT]\nhost = %s\ntoken = %s\n' "$DATABRICKS_HOST" "$ACCESS_TOKEN" > ~/.databrickscfg
           echo "Databricks CLI configured."
+          cat ~/.databrickscfg
           echo "Testing Databricks connection..."
-          databricks workspace ls /
+          databricks workspace ls / --profile DEFAULT
           echo "Databricks connection successful!"
 
       - name: Deploy to Databricks
@@ -215,9 +219,9 @@ jobs:
               mv "$spath" "$sfilepath" 2>/dev/null || true
               databricks workspace mkdirs "/$dir" 2>/dev/null || true
               if [[ -n "$format" ]]; then
-                databricks workspace import "/$dfilepath" --file "$sfilepath" --format "$format" --language "$lang" --overwrite
+                databricks workspace import "/$dfilepath" --file "$sfilepath" --format "$format" --language "$lang" --overwrite --profile DEFAULT
               else
-                databricks workspace import "/$dfilepath" --file "$sfilepath" --language "$lang" --overwrite
+                databricks workspace import "/$dfilepath" --file "$sfilepath" --language "$lang" --overwrite --profile DEFAULT
               fi
             else
               if [[ "$strip_ext" == "true" ]]; then
@@ -230,9 +234,9 @@ jobs:
               mv "$spath" "$filepath" 2>/dev/null || true
               [[ -n "$dir" ]] && databricks workspace mkdirs "/$dir" 2>/dev/null || true
               if [[ -n "$format" ]]; then
-                databricks workspace import "/$filepath" --file "$filepath" --format "$format" --language "$lang" --overwrite
+                databricks workspace import "/$filepath" --file "$filepath" --format "$format" --language "$lang" --overwrite --profile DEFAULT
               else
-                databricks workspace import "/$filepath" --file "$filepath" --language "$lang" --overwrite
+                databricks workspace import "/$filepath" --file "$filepath" --language "$lang" --overwrite --profile DEFAULT
               fi
             fi
             set +x
@@ -243,9 +247,9 @@ jobs:
             echo "################ Deploying $spath directory ################"
             set -x
             if [[ -n $dpath ]]; then
-              databricks workspace import-dir "$spath" "/$dpath" --overwrite
+              databricks workspace import-dir "$spath" "/$dpath" --overwrite --profile DEFAULT
             else
-              databricks workspace import-dir "$spath" "/$spath" --overwrite
+              databricks workspace import-dir "$spath" "/$spath" --overwrite --profile DEFAULT
             fi
             set +x
             echo "################ Deployment of $spath directory is done ################"
@@ -328,14 +332,14 @@ jobs:
               fi
               jobname=$(jq -r '.name' "$job")
               echo "Processing job: $jobname"
-              jobid=$(databricks jobs list --output JSON | jq -r --arg name "$jobname" '.jobs[] | select(.settings.name==$name) | .job_id')
+              jobid=$(databricks jobs list --output JSON --profile DEFAULT | jq -r --arg name "$jobname" '.jobs[] | select(.settings.name==$name) | .job_id')
               if [[ -z "$jobid" ]]; then
                 echo "No job found with name $jobname"
                 continue
               fi
               echo "Resetting job ID: $jobid"
               sed -i 's/"runtime_engine": "PHOTON"/"runtime_engine": ""/Ig' "$job"
-              databricks jobs reset --job-id "$jobid" --json-file "$job"
+              databricks jobs reset --job-id "$jobid" --json-file "$job" --profile DEFAULT
               echo "Reset done for $jobid"
             elif [[ -d "$job" ]]; then
               files=$(find "$job" -type f -name "*.json")
@@ -349,14 +353,14 @@ jobs:
                   continue
                 fi
                 jobname=$(jq -r '.name' "$file")
-                jobid=$(databricks jobs list --output JSON | jq -r --arg name "$jobname" '.jobs[] | select(.settings.name==$name) | .job_id')
+                jobid=$(databricks jobs list --output JSON --profile DEFAULT | jq -r --arg name "$jobname" '.jobs[] | select(.settings.name==$name) | .job_id')
                 if [[ -z "$jobid" ]]; then
                   echo "No job found with name $jobname"
                   continue
                 fi
                 echo "Resetting job ID: $jobid"
                 sed -i 's/"runtime_engine": "PHOTON"/"runtime_engine": ""/Ig' "$file"
-                databricks jobs reset --job-id "$jobid" --json-file "$file"
+                databricks jobs reset --job-id "$jobid" --json-file "$file" --profile DEFAULT
                 echo "Reset done for $jobid"
               done
             else
@@ -374,12 +378,12 @@ jobs:
           for job in ${{ inputs.job }}; do
             if [[ -f $job ]]; then
               jq . $job
-              databricks jobs create --json @$job > jobid.json
+              databricks jobs create --json @$job --profile DEFAULT > jobid.json
               cat jobid.json
               if [ -n "${{ vars.WORKFLOWJOBPERMISSIONS }}" ]; then
                 jobidnum=$(jq '.job_id' jobid.json)
                 echo "Assigning permissions to workflow job_id: $jobidnum"
-                databricks jobs set-permissions $jobidnum --json @permissions.json
+                databricks jobs set-permissions $jobidnum --json @permissions.json --profile DEFAULT
               else
                 echo "No permissions set"
               fi
@@ -387,12 +391,12 @@ jobs:
               files=$(find "$job" -type f -name "*.json")
               for file in $files; do
                 jq . $file
-                databricks jobs create --json @$file > jobid.json
+                databricks jobs create --json @$file --profile DEFAULT > jobid.json
                 cat jobid.json
                 if [ -n "${{ vars.WORKFLOWJOBPERMISSIONS }}" ]; then
                   jobidnum=$(jq '.job_id' jobid.json)
                   echo "Assigning permissions to workflow job_id: $jobidnum"
-                  databricks jobs set-permissions $jobidnum --json @permissions.json
+                  databricks jobs set-permissions $jobidnum --json @permissions.json --profile DEFAULT
                 else
                   echo "No permissions set"
                 fi
