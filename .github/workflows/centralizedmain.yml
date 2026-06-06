@@ -78,7 +78,7 @@ jobs:
 
     steps: 
       - name: Pipeline run information
-        shell: bash
+        shell: pwsh
         run: |
           echo "This pipeline is triggered by ${{github.actor}}"
           echo "Selected environment is ${{ inputs.environment }}"
@@ -126,7 +126,7 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Azure CLI script
-        shell: bash
+        shell: pwsh
         run: |
           az account show
 
@@ -152,10 +152,10 @@ jobs:
           Write-Host "Verifying installation..."
           & "$extractPath\databricks.exe" --version
               
-      # ✅ FIX: Added shell: bash to all bash script steps
+      # ✅ FIX: Added shell: pwsh to all pwsh script steps
       - name: Deploy to Databricks
         if: ${{ inputs.source_path != '' && inputs.destination_path != '' && inputs.team != '' && inputs.environment != '' }}
-        shell: bash
+        shell: pwsh
         run: |
           mkdir -p backupfolder
 
@@ -341,7 +341,7 @@ jobs:
           rm -rf input1.txt input2.txt backupfolder
 
       - name: Errors check
-        shell: bash
+        shell: pwsh
         run: |
             if [[ -f error.txt ]]
             then
@@ -352,7 +352,7 @@ jobs:
 
       - name: Errors
         if: failure()
-        shell: bash
+        shell: pwsh
         run: |
             echo "Following files are not deployed due to some errors"
             echo "Following given paths are nither one of available directories nor one of available files."
@@ -375,7 +375,7 @@ jobs:
 
       - name: Update existing Databricks workflow job
         if: ${{ inputs.job_type == 'Update_existing_job' && inputs.job != '' }}
-        shell: bash
+        shell: pwsh
         run: |
           set -euo pipefail
           set -x
@@ -436,7 +436,7 @@ jobs:
 
       - name: create new workflow job
         if: ${{ inputs.job_type == 'Create_new_job' && inputs.job_type != '' && inputs.job != '' && inputs.environment != '' }}
-        shell: bash
+        shell: pwsh
         run: |
             set -x
 
@@ -483,7 +483,7 @@ jobs:
 
       - name: Backup of existing file
         if: ${{ inputs.Source_file != '' && inputs.storage_container != '' && inputs.team != '' && inputs.environment != '' }}
-        shell: bash
+        shell: pwsh
         run: |
           STORAGE_CONTAINER=$(echo "${{ inputs.storage_container }}" | sed 's/^\s*//;s/\s*$//;s/\s*\/\s*/\//g')
           LOCAL_FILE="blob.yaml"
@@ -510,7 +510,7 @@ jobs:
 
       - name: deploy config to storage account
         if: ${{ inputs.Source_file != '' && inputs.storage_container != '' && inputs.team != '' && inputs.environment != '' }}
-        shell: bash
+        shell: pwsh
         run: |
           YAML_FILES="${{ inputs.Source_file }}"
           DEST_PATHS="${{ inputs.storage_container }}"
