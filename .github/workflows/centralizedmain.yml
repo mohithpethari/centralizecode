@@ -185,7 +185,7 @@ jobs:
           echo "Databricks CLI configured."
           cat ~/.databrickscfg
           echo "Testing Databricks connection..."
-          databricks workspace ls / --profile DEFAULT
+          databricks workspace list / --profile DEFAULT
           echo "Databricks connection successful!"
 
       - name: Deploy to Databricks
@@ -217,7 +217,7 @@ jobs:
               fi
               dir=$(dirname "$dpath")
               mv "$spath" "$sfilepath" 2>/dev/null || true
-              databricks workspace mkdirs "/$dir" 2>/dev/null || true
+              databricks workspace mkdirs "/$dir" --profile DEFAULT 2>/dev/null || true
               if [[ -n "$format" ]]; then
                 databricks workspace import "/$dfilepath" --file "$sfilepath" --format "$format" --language "$lang" --overwrite --profile DEFAULT
               else
@@ -232,7 +232,7 @@ jobs:
               dir=$(dirname "$filepath")
               [[ "$dir" == "." ]] && dir=""
               mv "$spath" "$filepath" 2>/dev/null || true
-              [[ -n "$dir" ]] && databricks workspace mkdirs "/$dir" 2>/dev/null || true
+              [[ -n "$dir" ]] && databricks workspace mkdirs "/$dir" --profile DEFAULT 2>/dev/null || true
               if [[ -n "$format" ]]; then
                 databricks workspace import "/$filepath" --file "$filepath" --format "$format" --language "$lang" --overwrite --profile DEFAULT
               else
