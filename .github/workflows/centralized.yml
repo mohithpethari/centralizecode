@@ -58,7 +58,7 @@ permissions:
 
 jobs:
   Centralized_Databricks_Deployment:
-    uses: mohithpethari/centralizecode/.github/workflows/centralizedmain.yml@mohith_dev
+    uses: mohithpethari/centralizecode/.github/workflows/centralizedmain.yml@main
     with:
       environment: ${{ inputs.environment }}
       source_path: ${{ inputs.source_path }}
