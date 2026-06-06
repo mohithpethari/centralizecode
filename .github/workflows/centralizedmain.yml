@@ -51,7 +51,7 @@ permissions:
 jobs:
   Approval-Request:
     if : always() && ( contains( inputs.environment, 'prod' ) ) # || contains( inputs.environment, 'stg' ))
-    runs-on: [ uhg-runner ]
+    runs-on: [ opm-runner ]
     environment: ${{ inputs.team }}
     steps:
         - name: Approval Request
