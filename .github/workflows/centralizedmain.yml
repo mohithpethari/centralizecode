@@ -96,6 +96,10 @@ jobs:
         with:
           python-version: '3.12.4' # Change to your Python version if needed
 
+      - name: Install Azure CLI (Windows)
+        run: |
+          az --version || (choco install azure-cli -y)
+
       - name: Azure login
         uses: azure/login@v2
         with:
