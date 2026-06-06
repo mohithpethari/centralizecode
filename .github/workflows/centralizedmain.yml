@@ -185,6 +185,14 @@ jobs:
           echo "Databricks CLI configured."
           cat ~/.databrickscfg
           echo "Testing Databricks connection..."
+
+          unset DATABRICKS_HOST
+          unset DATABRICKS_AZURE_RESOURCE_ID
+          unset ARM_CLIENT_ID
+          unset ARM_TENANT_ID
+          unset ACTIONS_ID_TOKEN_REQUEST_URL
+          unset ACTIONS_ID_TOKEN_REQUEST_TOKEN
+
           databricks workspace list / --profile DEFAULT
           echo "Databricks connection successful!"
 
@@ -192,6 +200,13 @@ jobs:
         if: ${{ inputs.source_path != '' && inputs.destination_path != '' && inputs.team != '' && inputs.environment != '' }}
         shell: bash
         run: |
+          unset DATABRICKS_HOST
+          unset DATABRICKS_AZURE_RESOURCE_ID
+          unset ARM_CLIENT_ID
+          unset ARM_TENANT_ID
+          unset ACTIONS_ID_TOKEN_REQUEST_URL
+          unset ACTIONS_ID_TOKEN_REQUEST_TOKEN
+
           dbx_deploy() {
             echo "################ Deploying $spath file ################"
             set -x
@@ -322,6 +337,13 @@ jobs:
         if: ${{ inputs.job_type == 'Update_existing_job' && inputs.job != '' }}
         shell: bash
         run: |
+          unset DATABRICKS_HOST
+          unset DATABRICKS_AZURE_RESOURCE_ID
+          unset ARM_CLIENT_ID
+          unset ARM_TENANT_ID
+          unset ACTIONS_ID_TOKEN_REQUEST_URL
+          unset ACTIONS_ID_TOKEN_REQUEST_TOKEN
+
           set -euo pipefail
           set -x
           for job in ${{ inputs.job }}; do
@@ -372,6 +394,13 @@ jobs:
         if: ${{ inputs.job_type == 'Create_new_job' && inputs.job != '' && inputs.environment != '' }}
         shell: bash
         run: |
+          unset DATABRICKS_HOST
+          unset DATABRICKS_AZURE_RESOURCE_ID
+          unset ARM_CLIENT_ID
+          unset ARM_TENANT_ID
+          unset ACTIONS_ID_TOKEN_REQUEST_URL
+          unset ACTIONS_ID_TOKEN_REQUEST_TOKEN
+
           set -x
           echo ${{ vars.WORKFLOWJOBPERMISSIONS }} > permissions.json
           sed -i "s/SPNAPPID/${{ secrets.AZURE_SP_APPLICATION_ID }}/g" permissions.json
