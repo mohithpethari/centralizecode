@@ -164,6 +164,7 @@ jobs:
           Write-Host "Verifying installation..."
           & "$extractPath\databricks.exe" --version
 
+      # ✅ FIXED: No heredoc - uses printf instead to avoid YAML indentation issues
       - name: Configure Databricks CLI Auth
         shell: bash
         run: |
@@ -174,11 +175,7 @@ jobs:
             exit 1
           fi
           echo "Token retrieved successfully."
-          cat > ~/.databrickscfg << DBCFG
-[DEFAULT]
-host  = $DATABRICKS_HOST
-token = $ACCESS_TOKEN
-DBCFG
+          printf '[DEFAULT]\nhost = %s\ntoken = %s\n' "$DATABRICKS_HOST" "$ACCESS_TOKEN" > ~/.databrickscfg
           echo "Databricks CLI configured."
           echo "Testing Databricks connection..."
           databricks workspace ls /
