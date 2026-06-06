@@ -77,7 +77,6 @@ jobs:
 
     steps:
 
-      # ✅ STEP 1: Add Git Bash to PATH - MUST BE FIRST STEP
       - name: Add Git Bash to PATH
         shell: powershell
         run: |
@@ -88,7 +87,7 @@ jobs:
             echo $gitUsr | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
             Write-Host "Git Bash found and added to PATH: $gitBin"
           } else {
-            Write-Host "Git Bash not found at $gitBin - installing..."
+            Write-Host "Git Bash not found - installing..."
             Invoke-WebRequest -Uri "https://github.com/git-for-windows/git/releases/download/v2.45.2.windows.1/Git-2.45.2-64-bit.exe" -OutFile "$env:TEMP\git.exe"
             Start-Process "$env:TEMP\git.exe" -Wait -ArgumentList '/VERYSILENT /NORESTART'
             echo $gitBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
@@ -116,7 +115,6 @@ jobs:
         with:
           python-version: '3.12.4'
 
-      # ✅ Install Azure CLI (Windows)
       - name: Install Azure CLI (Windows)
         shell: powershell
         run: |
@@ -149,7 +147,6 @@ jobs:
         run: |
           az account show
 
-      # ✅ Install Databricks CLI (Windows)
       - name: Setup Databricks CLI
         shell: powershell
         run: |
@@ -157,21 +154,36 @@ jobs:
           $url = "https://github.com/databricks/cli/releases/download/v$version/databricks_cli_${version}_windows_amd64.zip"
           $zipPath = "$env:TEMP\databricks.zip"
           $extractPath = "C:\databricks-cli"
-
           Write-Host "Downloading Databricks CLI v$version..."
           Invoke-WebRequest -Uri $url -OutFile $zipPath
-
           Write-Host "Extracting..."
           Expand-Archive -Path $zipPath -DestinationPath $extractPath -Force
-
           Write-Host "Adding to PATH..."
           echo $extractPath | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           $env:PATH += ";$extractPath"
-
           Write-Host "Verifying installation..."
           & "$extractPath\databricks.exe" --version
 
-      # ✅ Deploy to Databricks - uses shell: bash (Git Bash added in first step)
+      - name: Configure Databricks CLI Auth
+        shell: bash
+        run: |
+          echo "Getting Azure AD token for Databricks..."
+          ACCESS_TOKEN=$(az account get-access-token --resource $DATABRICKS_AZURE_RESOURCE_ID --query accessToken --output tsv)
+          if [[ -z "$ACCESS_TOKEN" ]]; then
+            echo "ERROR: Failed to get access token"
+            exit 1
+          fi
+          echo "Token retrieved successfully."
+          cat > ~/.databrickscfg << DBCFG
+[DEFAULT]
+host  = $DATABRICKS_HOST
+token = $ACCESS_TOKEN
+DBCFG
+          echo "Databricks CLI configured."
+          echo "Testing Databricks connection..."
+          databricks workspace ls /
+          echo "Databricks connection successful!"
+
       - name: Deploy to Databricks
         if: ${{ inputs.source_path != '' && inputs.destination_path != '' && inputs.team != '' && inputs.environment != '' }}
         shell: bash
@@ -179,20 +191,18 @@ jobs:
           dbx_deploy() {
             echo "################ Deploying $spath file ################"
             set -x
-
             case $spath in
-              *.py)   lang="PYTHON"; format=""; strip_ext=true ;;
-              *.ipynb) lang="PYTHON"; format="JUPYTER"; strip_ext=true ;;
-              *.sql)  lang="SQL";    format=""; strip_ext=true ;;
-              *.r|*.R) lang="R";    format=""; strip_ext=true ;;
-              *.scala|*.sc) lang="SCALA"; format=""; strip_ext=true ;;
-              *.html) lang="";      format="HTML"; strip_ext=true ;;
+              *.py)         lang="PYTHON"; format="";        strip_ext=true ;;
+              *.ipynb)      lang="PYTHON"; format="JUPYTER"; strip_ext=true ;;
+              *.sql)        lang="SQL";    format="";        strip_ext=true ;;
+              *.r|*.R)      lang="R";      format="";        strip_ext=true ;;
+              *.scala|*.sc) lang="SCALA";  format="";        strip_ext=true ;;
+              *.html)       lang="";       format="HTML";    strip_ext=true ;;
               *)
                 echo "Unsupported file type: $spath"
                 return 1
                 ;;
             esac
-
             if [[ -n $dpath ]]; then
               if [[ "$strip_ext" == "true" ]]; then
                 dfilepath=${dpath%.*}
@@ -225,7 +235,6 @@ jobs:
                 databricks workspace import "/$filepath" --file "$filepath" --language "$lang" --overwrite
               fi
             fi
-
             set +x
             echo "################ Deployment of $spath file is done ################"
           }
@@ -242,7 +251,6 @@ jobs:
             echo "################ Deployment of $spath directory is done ################"
           }
 
-          # Read input paths
           for i in $NOTEBOOK_PATH; do
             echo "$i" >> input1.txt
           done
@@ -250,7 +258,6 @@ jobs:
             echo "$j" >> input2.txt
           done
 
-          # Process each path pair
           while read -r spath <&3 && read -r dpath <&4; do
             if [[ -f $spath ]]; then
               case $spath in
@@ -271,10 +278,8 @@ jobs:
             fi
           done 3< input1.txt 4< input2.txt
 
-          # Cleanup
           rm -rf input1.txt input2.txt
 
-      # ✅ Errors check - shell: bash
       - name: Errors check
         shell: bash
         run: |
@@ -284,7 +289,6 @@ jobs:
             echo "No Errors! All files are deployed successfully"
           fi
 
-      # ✅ Errors - shell: bash
       - name: Errors
         if: failure()
         shell: bash
@@ -296,7 +300,6 @@ jobs:
           echo "Please recheck your inputs."
           echo "Don't worry! All available files have been deployed successfully."
 
-      # ✅ Install jq (Windows)
       - name: Install jq
         if: ${{ inputs.job_type != '' && inputs.job != '' && inputs.environment != '' }}
         shell: powershell
@@ -311,14 +314,12 @@ jobs:
           Write-Host "jq installed:"
           & "$jqPath\jq.exe" --version
 
-      # ✅ Update existing Databricks workflow job - shell: bash
       - name: Update existing Databricks workflow job
         if: ${{ inputs.job_type == 'Update_existing_job' && inputs.job != '' }}
         shell: bash
         run: |
           set -euo pipefail
           set -x
-
           for job in ${{ inputs.job }}; do
             if [[ -f "$job" ]]; then
               if ! jq . "$job" >/dev/null 2>&1; then
@@ -336,7 +337,6 @@ jobs:
               sed -i 's/"runtime_engine": "PHOTON"/"runtime_engine": ""/Ig' "$job"
               databricks jobs reset --job-id "$jobid" --json-file "$job"
               echo "Reset done for $jobid"
-
             elif [[ -d "$job" ]]; then
               files=$(find "$job" -type f -name "*.json")
               if [[ -z "$files" ]]; then
@@ -364,7 +364,6 @@ jobs:
             fi
           done
 
-      # ✅ Create new workflow job - shell: bash
       - name: Create new workflow job
         if: ${{ inputs.job_type == 'Create_new_job' && inputs.job != '' && inputs.environment != '' }}
         shell: bash
@@ -372,7 +371,6 @@ jobs:
           set -x
           echo ${{ vars.WORKFLOWJOBPERMISSIONS }} > permissions.json
           sed -i "s/SPNAPPID/${{ secrets.AZURE_SP_APPLICATION_ID }}/g" permissions.json
-
           for job in ${{ inputs.job }}; do
             if [[ -f $job ]]; then
               jq . $job
@@ -404,43 +402,26 @@ jobs:
             fi
           done
 
-      # ✅ Deploy config to storage account - shell: bash
       - name: Deploy config to storage account
         if: ${{ inputs.Source_file != '' && inputs.storage_container != '' && inputs.team != '' && inputs.environment != '' }}
         shell: bash
         run: |
           YAML_FILES="${{ inputs.Source_file }}"
           DEST_PATHS="${{ inputs.storage_container }}"
-
           IFS=',' read -ra SOURCES <<< "$YAML_FILES"
           IFS=',' read -ra DESTS <<< "$DEST_PATHS"
-
           for idx in "${!SOURCES[@]}"; do
             SOURCE_FILE=$(echo "${SOURCES[$idx]}" | xargs)
             DEST_CONTAINER=$(echo "${DESTS[$idx]}" | xargs | sed 's/^\s*//;s/\s*$//;s/\s*\/\s*/\//g')
             FILE_NAME=$(basename "$SOURCE_FILE")
             echo "Processing $FILE_NAME to $DEST_CONTAINER"
-
-            az storage blob download \
-              --account-name "$STORAGEACCOUNT" \
-              --container-name "$DEST_CONTAINER" \
-              --name "$FILE_NAME" \
-              --file existingfile.yaml \
-              --auth-mode login 2>/dev/null || touch existingfile.yaml
-
+            az storage blob download --account-name "$STORAGEACCOUNT" --container-name "$DEST_CONTAINER" --name "$FILE_NAME" --file existingfile.yaml --auth-mode login 2>/dev/null || touch existingfile.yaml
             if ! cmp -s "$SOURCE_FILE" existingfile.yaml; then
               echo "Files are different or new. Uploading..."
-              az storage blob upload \
-                --account-name "$STORAGEACCOUNT" \
-                --container-name "$DEST_CONTAINER" \
-                --file "$SOURCE_FILE" \
-                --name "$FILE_NAME" \
-                --auth-mode login \
-                --overwrite
-              echo "File \"$SOURCE_FILE\" deployed to \"$DEST_CONTAINER\""
+              az storage blob upload --account-name "$STORAGEACCOUNT" --container-name "$DEST_CONTAINER" --file "$SOURCE_FILE" --name "$FILE_NAME" --auth-mode login --overwrite
+              echo "File deployed successfully"
             else
               echo "Files are identical. No changes needed."
             fi
-
             rm -f existingfile.yaml
           done
