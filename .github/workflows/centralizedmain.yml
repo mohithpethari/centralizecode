@@ -66,7 +66,6 @@ jobs:
     env:
       NOTEBOOK_PATH: ${{ inputs.source_path }}
       DESTINATION_PATH: ${{ inputs.destination_path }}
-      DATABRICKS_AZURE_RESOURCE_ID: ${{ vars.RESOURCEID }}
       USERNAME: ${{ github.actor }}
       ARM_TENANT_ID: ${{ secrets.AZURE_SP_TENANT_ID }}
       ARM_CLIENT_ID: ${{ secrets.AZURE_SP_APPLICATION_ID }}
@@ -171,8 +170,11 @@ jobs:
           MSYS2_ARG_CONV_EXCL: "*"
         run: |
           echo "Getting Azure AD token for Databricks..."
+
+          # Fetch token using the correct Databricks well-known resource ID stored in vars.DATABRICKS_RESOURCE_ID
+          # vars.DATABRICKS_RESOURCE_ID must be set to: 2ff814a6-3304-4ab8-85cb-cd0e6f879c1d
           ACCESS_TOKEN=$(az account get-access-token \
-            --resource "$DATABRICKS_AZURE_RESOURCE_ID" \
+            --resource "${{ vars.DATABRICKS_RESOURCE_ID }}" \
             --query accessToken --output tsv)
 
           if [[ -z "$ACCESS_TOKEN" ]]; then
@@ -187,7 +189,6 @@ jobs:
           echo "Testing Databricks connection..."
 
           unset DATABRICKS_HOST
-          unset DATABRICKS_AZURE_RESOURCE_ID
           unset ARM_CLIENT_ID
           unset ARM_TENANT_ID
           unset ACTIONS_ID_TOKEN_REQUEST_URL
@@ -201,7 +202,6 @@ jobs:
         shell: bash
         run: |
           unset DATABRICKS_HOST
-          unset DATABRICKS_AZURE_RESOURCE_ID
           unset ARM_CLIENT_ID
           unset ARM_TENANT_ID
           unset ACTIONS_ID_TOKEN_REQUEST_URL
@@ -338,7 +338,6 @@ jobs:
         shell: bash
         run: |
           unset DATABRICKS_HOST
-          unset DATABRICKS_AZURE_RESOURCE_ID
           unset ARM_CLIENT_ID
           unset ARM_TENANT_ID
           unset ACTIONS_ID_TOKEN_REQUEST_URL
@@ -395,7 +394,6 @@ jobs:
         shell: bash
         run: |
           unset DATABRICKS_HOST
-          unset DATABRICKS_AZURE_RESOURCE_ID
           unset ARM_CLIENT_ID
           unset ARM_TENANT_ID
           unset ACTIONS_ID_TOKEN_REQUEST_URL
