@@ -212,6 +212,9 @@ jobs:
       - name: Deploy to Databricks
         if: ${{ inputs.source_path != '' && inputs.destination_path != '' && inputs.team != '' && inputs.environment != '' }}
         shell: bash
+        env:
+          MSYS_NO_PATHCONV: 1
+          MSYS2_ARG_CONV_EXCL: "*"
         run: |
           unset ARM_CLIENT_ID
           unset ARM_CLIENT_SECRET
@@ -352,6 +355,9 @@ jobs:
       - name: Update existing Databricks workflow job
         if: ${{ inputs.job_type == 'Update_existing_job' && inputs.job != '' }}
         shell: bash
+        env:
+          MSYS_NO_PATHCONV: 1
+          MSYS2_ARG_CONV_EXCL: "*"
         run: |
           unset ARM_CLIENT_ID
           unset ARM_CLIENT_SECRET
@@ -412,6 +418,9 @@ jobs:
       - name: Create new workflow job
         if: ${{ inputs.job_type == 'Create_new_job' && inputs.job != '' && inputs.environment != '' }}
         shell: bash
+        env:
+          MSYS_NO_PATHCONV: 1
+          MSYS2_ARG_CONV_EXCL: "*"
         run: |
           unset ARM_CLIENT_ID
           unset ARM_CLIENT_SECRET
@@ -460,6 +469,9 @@ jobs:
       - name: Deploy config to storage account
         if: ${{ inputs.Source_file != '' && inputs.storage_container != '' && inputs.team != '' && inputs.environment != '' }}
         shell: bash
+        env:
+          MSYS_NO_PATHCONV: 1
+          MSYS2_ARG_CONV_EXCL: "*"
         run: |
           YAML_FILES="${{ inputs.Source_file }}"
           DEST_PATHS="${{ inputs.storage_container }}"
