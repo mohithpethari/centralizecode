@@ -1,0 +1,17 @@
+resources:
+  jobs:
+    testjob:
+      name: testjob
+      tasks:
+        - task_key: testjb
+          notebook_task:
+            notebook_path: /Workspace/de/notebooks/main
+            source: WORKSPACE
+          environment_key: Default
+      queue:
+        enabled: true
+      environments:
+        - environment_key: Default
+          spec:
+            environment_version: "5"
+      performance_target: PERFORMANCE_OPTIMIZED
