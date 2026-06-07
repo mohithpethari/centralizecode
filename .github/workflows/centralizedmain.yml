@@ -166,21 +166,32 @@ jobs:
         env:
           MSYS_NO_PATHCONV: 1
           MSYS2_ARG_CONV_EXCL: "*"
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_SP_APPLICATION_ID }}
-          AZURE_TENANT_ID: ${{ secrets.AZURE_SP_TENANT_ID }}
-          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          ARM_CLIENT_SECRET: ${{ secrets.AZURE_SP_CLIENT_SECRET }}
+          ARM_CLIENT_ID: ${{ secrets.AZURE_SP_APPLICATION_ID }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_SP_TENANT_ID }}
         run: |
-          echo "Configuring Databricks CLI using Azure CLI auth..."
+          echo "Getting Azure AD token for Databricks using client secret..."
 
-          # Write databrickscfg using azure auth mode - no token needed
-          printf '[DEFAULT]\nhost = %s\nazure_client_id = %s\nazure_tenant_id = %s\nazure_use_msi = false\nazure_login_app_id = 2ff814a6-3304-4ab8-85cb-cd0e6f879c1d\nauth_type = azure-cli\n' \
-            "$DATABRICKS_HOST" \
-            "$AZURE_CLIENT_ID" \
-            "$AZURE_TENANT_ID" > ~/.databrickscfg
+          TOKEN_RESPONSE=$(curl -s -X POST \
+            "https://login.microsoftonline.com/${ARM_TENANT_ID}/oauth2/token" \
+            -d "grant_type=client_credentials" \
+            -d "client_id=${ARM_CLIENT_ID}" \
+            -d "client_secret=${ARM_CLIENT_SECRET}" \
+            -d "resource=2ff814a6-3304-4ab8-85cb-cd0e6f879c1d")
 
+          echo "Token response received."
+
+          ACCESS_TOKEN=$(echo "$TOKEN_RESPONSE" | grep -o '"access_token":"[^"]*"' | cut -d'"' -f4)
+
+          if [[ -z "$ACCESS_TOKEN" ]]; then
+            echo "ERROR: Failed to get access token"
+            echo "Response: $TOKEN_RESPONSE"
+            exit 1
+          fi
+
+          echo "Token retrieved successfully."
+          printf '[DEFAULT]\nhost = %s\ntoken = %s\n' "$DATABRICKS_HOST" "$ACCESS_TOKEN" > ~/.databrickscfg
           echo "Databricks CLI configured."
-          cat ~/.databrickscfg
-
           echo "Testing Databricks connection..."
           databricks workspace list / --profile DEFAULT
           echo "Databricks connection successful!"
